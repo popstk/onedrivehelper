@@ -2,6 +2,7 @@
     "host": "redis://localhost:6379",
     "db": 1,
     "queue": "upload",
+    "session": "~/.onedrive.json",
     "ignoreext": [
         "html",
         "htm",
