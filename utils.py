@@ -13,6 +13,9 @@ for h in (ch, fh):
     logging.getLogger().addHandler(h)
     logging.getLogger().setLevel(logging.DEBUG)
 
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 config_file = "config.json"
 
 

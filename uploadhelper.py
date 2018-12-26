@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import signal
+import traceback
 import requests
 import onedrivesdk
 from onedrivecmd.utils import session as od_session
@@ -9,7 +10,7 @@ from onedrivecmd.utils import uploader as od_uploader
 from onedrivecmd.utils import convert_utf8_dict_to_dict
 from utils import conf
 from utils import get_redis_client
-from progress.bar import Bar
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 stopped = False
@@ -24,13 +25,10 @@ def handler(signum, _):
 
 
 def create_upload_session(api_base_url, token, source_file, dest_path):
-    # Prepare API call
-    dest_path = od_uploader.path_to_remote_path(
-        dest_path) + '/' + od_uploader.path_to_name(source_file)
-    info_json = json.dumps({'item': {
-        '@name.conflictBehavior': 'fail',
-        'name': od_uploader.path_to_name(source_file)
-    }}, sort_keys=True)
+    filename = os.path.basename(source_file)
+    if not dest_path.endswith('/'):
+        dest_path += '/'
+    dest_path += filename
 
     api_url = api_base_url + \
         'drive/root:{dest_path}:/upload.createSession'.format(
@@ -39,13 +37,17 @@ def create_upload_session(api_base_url, token, source_file, dest_path):
         'Authorization': 'bearer {access_token}'.format(access_token=token),
         'content-type': 'application/json'
     }
+    info_json = json.dumps({'item': {
+        '@name.conflictBehavior': 'fail',
+        'name': filename
+    }}, sort_keys=True)
 
-    logger.debug("headers: %s, request data: %s" % (headers, info_json))
+    # logger.debug("headers: %s, request data: %s" % (headers, info_json))
     req = requests.post(api_url, data=info_json, headers=headers)
     if req.status_code > 201:
         logger.error("status code: %d, respond: %s" %
                      (req.status_code, req.json()))
-        return False
+        return None
 
     logger.info(req.json())
     return convert_utf8_dict_to_dict(req.json())
@@ -56,7 +58,6 @@ def resume_session(source_file):
     if result is None:
         return None
 
-    logger.info("Resuming %s", source_file)
     data = json.loads(result, encoding="utf-8")
     req = requests.get(data["uploadUrl"])
     if req.status_code != 200:
@@ -68,44 +69,54 @@ def resume_session(source_file):
     return data
 
 
-def upload(api_base_url='', token='', source_file='', dest_path='', chunksize=10247680):
-    if not dest_path.endswith('/'):
-        dest_path += '/'
+def parse_session_offset(session_conf):
+    if "nextExpectedRanges" in session_conf:
+        ranges = session_conf["nextExpectedRanges"]
+        if len(ranges) > 0:
+            start, _ = ranges[0].split('-')
+            return int(start)
+    return 0
 
+
+def upload(api_base_url, token, source_file, dest_path, chunksize=1024*1024):
+    """
+    str, str, str, str, int -> bool
+
+    Upload a file via the API, instead of the SDK.
+    """
     session_conf = resume_session(source_file)
     if session_conf is None:
         session_conf = create_upload_session(
             api_base_url, token, source_file, dest_path)
 
-    start = 0
-    if "nextExpectedRanges" in session_conf:
-        start, _ = session_conf["nextExpectedRanges"].split('-')
-        start = int(start)
+    # logger.debug("session_conf = %s", session_conf)
+    total = os.path.getsize(source_file)
+    offset = parse_session_offset(session_conf)
+    if offset > 0:
+        logger.info("Resuming %s [%d -> %d]" % (source_file, offset, total))
 
-    file_size = os.path.getsize(source_file)
-    logger.info("Start from %d/%d" % (start, file_size))
-
-    range_list = [[i, i + chunksize - 1]
-                  for i in range(start, file_size, chunksize)]
-    range_list[-1][-1] = file_size - 1
-
-    bar = Bar('Uploading', max=len(range_list),
-              suffix='%(percent).1f%% - %(eta)ds')
-    bar.next()  # nessesery to init the Bar
-
-    logger.info("Start uploading..")
-    uploadUrl = session_conf['uploadUrl']
     requests_session = requests.Session()
+    uploadUrl = session_conf["uploadUrl"]
 
-    for i in range_list:
-        if stopped:
-            return False
-        od_uploader.upload_one_piece(
-            uploadUrl=uploadUrl, token=token, source_file=source_file,
-            range_this=i, file_size=file_size, requests_session=requests_session)
-        bar.next()
+    with tqdm(total=total, unit="B", unit_scale=True, initial=offset) as bar:
+        while bar.n < total:
+            if stopped:
+                break
 
-    bar.finish()
+            i = [bar.n, min(bar.n+chunksize-1, total-1)]
+            od_uploader.upload_one_piece(
+                uploadUrl=uploadUrl, token=token,
+                source_file=source_file, range_this=i,
+                file_size=total, requests_session=requests_session)
+            bar.update(chunksize)
+
+    if bar.n < total:
+        del session_conf["nextExpectedRanges"]
+        redisclient.hset(pending_session_key, source_file,
+                         json.dumps(session_conf))
+        return False
+
+    redisclient.hdel(pending_session_key, source_file)
     return True
 
 
@@ -127,7 +138,7 @@ def upload_from_queue():
         except KeyboardInterrupt:
             return
         except Exception as e:
-            logger.error(e)
+            logger.error(traceback.format_exc())
             return
 
         succ = False
@@ -138,16 +149,19 @@ def upload_from_queue():
                 api_base_url=odclient.base_url,
                 token=token,
                 source_file=path,
-                dest_path="od:/upload")
-            if succ:
-                os.remove(path)
+                dest_path="/upload")
+
         except KeyboardInterrupt:
             redisclient.rpush("pending", path)
         except Exception as e:
-            logger.error(e)
+            logger.error(traceback.format_exc())
         finally:
             key = "success" if succ else "fail"
             redisclient.rpush(key, path)
+
+        if succ:
+            logger.info("Done! remove file: %s", path)
+            os.remove(path)
 
 
 if __name__ == "__main__":
