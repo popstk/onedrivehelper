@@ -7,6 +7,7 @@
         "html",
         "htm",
         "url",
-        "torrent"
+        "torrent",
+        "chm"
     ]
 }
