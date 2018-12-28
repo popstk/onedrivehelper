@@ -9,11 +9,6 @@ from onedrivecmd.utils import session as od_session
 
 logger = logging.getLogger(__name__)
 
-def handler(signum, _):
-    logger.warn('received SIGQUIT, doing graceful shutting down..')
-    global stopped
-    stopped = True
-
 
 def create_session(api_base_url, token, source_file, dest_path):
     filename = os.path.basename(source_file)
@@ -38,9 +33,7 @@ def create_session(api_base_url, token, source_file, dest_path):
     if req.status_code > 201:
         logger.error("status code: %d, respond: %s" %
                      (req.status_code, req.json()))
-        return None
 
-    logger.info(req.json())
     return convert_utf8_dict_to_dict(req.json())
 
 
@@ -55,7 +48,7 @@ def resume_session(data):
     return data
 
 
-def upload_piece(uploadUrl, token, source_file, range_this, file_size, requests_session):
+def upload_piece(uploadUrl, token, source_file, range_this, file_size, session):
     content_length = range_this[1] - range_this[0] + 1
     file_piece = file_read_seek_len(source_file, range_this[0], content_length)
     headers = {
@@ -64,7 +57,7 @@ def upload_piece(uploadUrl, token, source_file, range_this, file_size, requests_
             start=range_this[0], to=range_this[1],  total=str(file_size)),
         'Content-Length': str(content_length)
     }
-    req = requests_session.put(uploadUrl, data=file_piece, headers=headers)
+    req = session.put(uploadUrl, data=file_piece, headers=headers)
     return req
 
 

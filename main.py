@@ -5,15 +5,16 @@ import traceback
 import json
 import logging
 import redis
+import shutil
 from tqdm import tqdm
 from urllib.parse import urlparse
 from onedriveext import OneDriveClient
-from onedriveext.upload import upload
 from onedriveext.persist import RedisPersist
+
 
 logger = logging.getLogger(__name__)
 stopped = False
-conf = get_config()
+conf = None
 
 
 def init_logger(name):
@@ -42,14 +43,42 @@ def handler(signum, _):
     stopped = True
 
 
-def cancel():
-    return stopped
-
-
-def generate_chunk_show(path):
+def gen_chunk_show(path, chunksize):
     total = os.path.getsize(path)
-    with tqdm(total=total, unit="B", unit_scale=True, initial=offset) as bar:
-        bar.update(chunksize)
+    bar = None
+
+    def chunk_show(req, this_range):
+        nonlocal bar
+        if bar is None:
+            bar = tqdm(total=total, unit="B",
+                       unit_scale=True, initial=this_range[0])
+        bar.update(this_range[1]-this_range[0])
+
+    return chunk_show
+
+
+def ignore(f):
+    _, ext = os.path.splitext(f)
+    if ext[1:].lower() in conf["ignoreext"]:
+        return False
+
+
+def filter_files(path):
+    if not os.path.exists(path):
+        logger.error("Path not exists: %s", path)
+        return []
+
+    if os.path.isfile(path):
+        return [("/", path)]
+
+    res = []
+    directory = "/"+os.path.basename(path)
+    for p in os.walk(path):
+        dirpath, _, fs = p
+        for f in fs:
+            if not ignore(f):
+                res.append((directory, os.path.join(dirpath, f)))
+    return res
 
 
 def upload_from_queue():
@@ -58,37 +87,47 @@ def upload_from_queue():
     redisclient = redis.StrictRedis(
         host=u.hostname, port=u.port, db=conf["db"])
     client = OneDriveClient.load_session(conf["session"])
+    chunksize = 5*1024*1024
+    quueue_key = conf["queue"]
 
     while not stopped:
         try:
-            result = redisclient.blpop(conf["queue"], 1)
+            result = redisclient.blpop(quueue_key, 1)
             if result is None:
                 continue
             path = result[1].decode(encoding="utf-8")
             logger.info("Get path %s", path)
-            if not os.path.exists(path):
-                logger.error("Path not exists: %s", path)
-                continue
-        except KeyboardInterrupt:
-            return
-        except Exception:
-            logger.error(traceback.format_exc())
-            return
 
-        try:
-            ret = client.upload(path, "/upload", persist=persist,
-                                cancel_func=cancel, chunk_func=chunk_show)
-            if ret:
-                logger.info("Done! remove file: %s", path)
-                os.remove(path)
-        except KeyboardInterrupt:
-            redisclient.rpush("pending", path)
+            for dest, p in filter_files(path):
+                if stopped:
+                    raise Exception("break")
+
+                ret = client.upload(p, dest,
+                                    persist=persist, chunksize=chunksize,
+                                    cancel_func=lambda: stopped,
+                                    chunk_func=gen_chunk_show(path, chunksize))
+                if ret:
+                    logger.info("Done! remove file: %s", path)
+                    os.remove(path)
+
+            if os.path.isdir(path):
+                logger.info("Done! remove directory: %s", path)
+                #shutil.rmtree(path)
+
         except Exception:
+            redisclient.rpush(quueue_key, path)
             logger.error(traceback.format_exc())
+
+
+def main():
+    for sig in [signal.SIGINT, signal.SIGTERM]:
+        signal.signal(sig, handler)
+    global conf
+    conf = get_config()
+    init_logger("upload")
+    upload_from_queue()
+    logger.info("bye")
 
 
 if __name__ == "__main__":
-    for sig in [signal.SIGINT, signal.SIGTERM]:
-        signal.signal(sig, handler)
-    upload_from_queue()
-    logger.info("bye")
+    main()
