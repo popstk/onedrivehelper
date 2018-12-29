@@ -10,7 +10,7 @@ class RedisPersist(object):
     def Get(self, key):
         result = self.client.hget(pending_session_key, key)
         if result:
-            return json.loads(result, encoding="utf-8")
+            return json.loads(result.decode("utf-8"), encoding="utf-8")
 
     def Set(self, key, value):
         return self.client.hset(pending_session_key, key, json.dumps(value))

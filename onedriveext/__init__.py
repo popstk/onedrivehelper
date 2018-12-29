@@ -1,66 +1,27 @@
-import os
-import logging
-import requests
-from onedrivecmd.utils import session as od_session
-from . import upload
+from enum import IntEnum
+from enum import unique
 
-logger = logging.getLogger(__name__)
-default_session_file = "~/.onedrive.json"
+# https://docs.microsoft.com/zh-cn/onedrive/developer/sp2019/docs/rest-api/concepts/errors?view=odsp-graph-online
+@unique
+class StatusCode(IntEnum):
+    BadRequest = 400
+    Unauthorized = 401
+    Forbidden = 403
+    NotFound = 404
+    MethodNotAllowed = 405
+    NotAcceptable = 406
+    Conflict = 409
+    Gone = 410
+    LengthRequired=411
+    PreconditionFailed=412
+    RequestEntityTooLarge=413
+    UnsupportedMediaType = 415
+    RequestedRangeNotSatisfiable = 416
+    UnprocessableEntity = 422
+    TooManyRequests = 429
+    InternalServerError=500
+    NotImplemented=501,
+    ServiceUnavailable=503
+    InsufficientStorage=507
+    BandwidthLimitExceeded=509
 
-
-class OneDriveClient(object):
-    def __init__(self, client):
-        self.client = client
-
-    def upload(self, src, dest="/", chunksize=1024*1024*10, persist=None,
-               cancel_func=None, chunk_func=None):
-        od_session.refresh_token(self.client)
-        token = od_session.get_access_token(self.client)
-
-        logger.debug("Got token %s", token)
-
-        session = None
-        if persist is not None:
-            result = persist.Get(src)
-            if result:
-                session = upload.resume_session(result)
-
-        if session is None:
-            session = upload.create_session(
-                self.client.base_url, token, src, dest)
-        
-        if "error" in session:
-            logger.error(session["error"])
-            return False
-
-        requests_session = requests.Session()
-        uploadUrl = session["uploadUrl"]
-        total = os.path.getsize(src)
-        offset = upload.parse_session_offset(session)
-
-        # save session
-        persist.Set(src, session)
-        logger.debug("session_conf = %s", session)
-
-        while offset < total:
-            if cancel_func and cancel_func():
-                break
-
-            this_range = [offset, min(offset+chunksize-1, total-1)]
-            respond = upload.upload_piece(uploadUrl, token, src,
-                                          this_range, total, requests_session)
-            chunk_func(respond, this_range)
-            offset += chunksize
-
-        else:
-            persist.Del(src)
-            return True
-
-        return False
-
-    @staticmethod
-    def load_session(path):
-        if path is None or path == "":
-            path = default_session_file
-        return OneDriveClient(
-            od_session.load_session(None, os.path.expanduser(path)))

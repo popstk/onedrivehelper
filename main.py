@@ -8,7 +8,9 @@ import redis
 import shutil
 from tqdm import tqdm
 from urllib.parse import urlparse
-from onedriveext import OneDriveClient
+from onedrivesdk.error import OneDriveError
+from onedrivesdk.error import ErrorCode
+from onedriveext.client import OneDriveClient
 from onedriveext.persist import RedisPersist
 
 
@@ -78,6 +80,7 @@ def filter_files(path):
         for f in fs:
             if not ignore(f):
                 res.append((directory, os.path.join(dirpath, f)))
+    logger.info(res)
     return res
 
 
@@ -88,11 +91,12 @@ def upload_from_queue():
         host=u.hostname, port=u.port, db=conf["db"])
     client = OneDriveClient.load_session(conf["session"])
     chunksize = 5*1024*1024
-    quueue_key = conf["queue"]
+    queue_key = conf["queue"]
+    queue_fail_key = "fail"
 
     while not stopped:
         try:
-            result = redisclient.blpop(quueue_key, 1)
+            result = redisclient.blpop(queue_key, 1)
             if result is None:
                 continue
             path = result[1].decode(encoding="utf-8")
@@ -102,20 +106,25 @@ def upload_from_queue():
                 if stopped:
                     raise Exception("break")
 
-                ret = client.upload(p, dest,
-                                    persist=persist, chunksize=chunksize,
-                                    cancel_func=lambda: stopped,
-                                    chunk_func=gen_chunk_show(path, chunksize))
-                if ret:
-                    logger.info("Done! remove file: %s", path)
-                    os.remove(path)
+                try:
+                    client.upload(p, dest,
+                                  persist=persist, chunksize=chunksize,
+                                  cancel_func=lambda: stopped,
+                                  chunk_func=gen_chunk_show(path, chunksize))
+                    
+                except OneDriveError as exc:
+                    if exc.code != ErrorCode.NameAlreadyExists:
+                        raise exc
+                
+                logger.info("Done! remove file: %s", p)
+                os.remove(p)
 
             if os.path.isdir(path):
                 logger.info("Done! remove directory: %s", path)
-                #shutil.rmtree(path)
+                shutil.rmtree(path)
 
         except Exception:
-            redisclient.rpush(quueue_key, path)
+            redisclient.rpush(queue_fail_key, path)
             logger.error(traceback.format_exc())
 
 

@@ -1,11 +1,10 @@
 import os
 import logging
 import json
-import signal
 import requests
 from onedrivecmd.utils.helper_file import file_read_seek_len
 from onedrivecmd.utils import convert_utf8_dict_to_dict
-from onedrivecmd.utils import session as od_session
+from onedrivesdk.http_response import HttpResponse
 
 logger = logging.getLogger(__name__)
 
@@ -30,18 +29,12 @@ def create_session(api_base_url, token, source_file, dest_path):
 
     # logger.debug("headers: %s, request data: %s" % (headers, info_json))
     req = requests.post(api_url, data=info_json, headers=headers)
-    if req.status_code > 201:
-        logger.error("status code: %d, respond: %s" %
-                     (req.status_code, req.json()))
-
+    HttpResponse(req.status_code, req.headers, req.content)
     return convert_utf8_dict_to_dict(req.json())
-
 
 def resume_session(data):
     req = requests.get(data["uploadUrl"])
-    if req.status_code != 200:
-        return None
-
+    HttpResponse(req.status_code, req.headers, req.content)
     result = convert_utf8_dict_to_dict(req.json())
     for k in ("expirationDateTime", "nextExpectedRanges"):
         data[k] = result[k]
