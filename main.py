@@ -85,23 +85,24 @@ def filter_files(path):
 
 
 def upload_from_queue():
-    u = urlparse(conf["host"])
-    persist = RedisPersist(host=u.hostname, port=u.port, db=conf["db"])
-    redisclient = redis.StrictRedis(
-        host=u.hostname, port=u.port, db=conf["db"])
+    u = urlparse(conf["url"])
+    f = list(filter(None, u.path.split('/')))
+    db = int(f[0]) if len(f) > 0 else 0
+    persist = RedisPersist(host=u.hostname, port=u.port, db=db)
+    redisclient = redis.StrictRedis(host=u.hostname, port=u.port, db=db)
     client = OneDriveClient.load_session(conf["session"])
     chunksize = 5*1024*1024
     queue_key = conf["queue"]
     queue_fail_key = "fail"
 
     while not stopped:
-        try:
-            result = redisclient.blpop(queue_key, 1)
-            if result is None:
-                continue
-            path = result[1].decode(encoding="utf-8")
-            logger.info("Get path %s", path)
+        result = redisclient.blpop(queue_key, 1)
+        if result is None:
+            continue
+        path = result[1].decode(encoding="utf-8")
+        logger.info("Get path %s", path)
 
+        try:
             for dest, p in filter_files(path):
                 if stopped:
                     raise Exception("break")
@@ -111,11 +112,11 @@ def upload_from_queue():
                                   persist=persist, chunksize=chunksize,
                                   cancel_func=lambda: stopped,
                                   chunk_func=gen_chunk_show(path, chunksize))
-                    
+
                 except OneDriveError as exc:
                     if exc.code != ErrorCode.NameAlreadyExists:
                         raise exc
-                
+
                 logger.info("Done! remove file: %s", p)
                 os.remove(p)
 
