@@ -1,6 +1,7 @@
 {
     "url": "redis://localhost:6379/1",
     "queue": "upload",
+    "rootpath": "/upload",
     "session": "~/.onedrive.json",
     "ignoreext": [
         "html",

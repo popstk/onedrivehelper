@@ -61,8 +61,7 @@ def gen_chunk_show(path, chunksize):
 
 def ignore(f):
     _, ext = os.path.splitext(f)
-    if ext[1:].lower() in conf["ignoreext"]:
-        return False
+    return ext[1:].lower() in conf["ignoreext"]
 
 
 def filter_files(path):
@@ -74,7 +73,7 @@ def filter_files(path):
         return [("/", path)]
 
     res = []
-    directory = "/"+os.path.basename(path)
+    directory = '/' + os.path.basename(path)
     for p in os.walk(path):
         dirpath, _, fs = p
         for f in fs:
@@ -84,12 +83,21 @@ def filter_files(path):
     return res
 
 
-def upload_from_queue():
-    u = urlparse(conf["url"])
+def parseRedisUrl(u):
+    u = urlparse(u)
     f = list(filter(None, u.path.split('/')))
-    db = int(f[0]) if len(f) > 0 else 0
-    persist = RedisPersist(host=u.hostname, port=u.port, db=db)
-    redisclient = redis.StrictRedis(host=u.hostname, port=u.port, db=db)
+    return {
+        "host": u.hostname,
+        "port": u.port,
+        "db": int(f[0]) if len(f) > 0 else 0
+    }
+
+
+def upload_from_queue():
+    kwargs = parseRedisUrl(conf["url"])
+    persist = RedisPersist(**kwargs)
+    redisclient = redis.StrictRedis(**kwargs)
+
     client = OneDriveClient.load_session(conf["session"])
     chunksize = 5*1024*1024
     queue_key = conf["queue"]
@@ -108,7 +116,7 @@ def upload_from_queue():
                     raise Exception("break")
 
                 try:
-                    client.upload(p, dest,
+                    client.upload(p, conf["rootpath"]+dest,
                                   persist=persist, chunksize=chunksize,
                                   cancel_func=lambda: stopped,
                                   chunk_func=gen_chunk_show(path, chunksize))
