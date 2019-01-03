@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/go-redis/redis"
@@ -16,6 +17,10 @@ const (
 
 type config struct {
 	URL string `json:"url"`
+}
+
+func basePath() (string, error) {
+	return filepath.Abs(filepath.Dir(os.Args[0]))
 }
 
 func parseRedisConf(name string) (string, error) {
@@ -48,7 +53,13 @@ func main() {
 		return
 	}
 
-	u, err := parseRedisConf(fileName)
+	base, err := basePath()
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	u, err := parseRedisConf(filepath.Join(base, fileName))
 	if err != nil {
 		log.Print(err)
 		return
