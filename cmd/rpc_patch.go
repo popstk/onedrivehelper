@@ -36,7 +36,7 @@ func doMethod(n rpc.Notifier, request *notifyRequest) {
 
 func pinger(ws *websocket.Conn, ch chan struct{}) {
 	defer ws.Close()
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(10 * time.Minute)
 
 	log.Print("pinger")
 
@@ -85,8 +85,6 @@ func setNotifier(u string, n rpc.Notifier, chexit chan struct{}) error {
 		return nil
 	})
 
-	go pinger(ws, chexit)
-
 	go func() {
 		defer func() {
 			ws.Close()
@@ -95,23 +93,14 @@ func setNotifier(u string, n rpc.Notifier, chexit chan struct{}) error {
 
 		for {
 			log.Print("ReadJSON...")
-			/*
-				var request notifyRequest
-				if err := ws.ReadJSON(&request); err != nil {
-					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway) {
-						log.Print("error:", err)
-					}
-					return
+			var request notifyRequest
+			if err := ws.ReadJSON(&request); err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway) {
+					log.Print("error:", err)
 				}
-				doMethod(n, &request)
-			*/
-			t, d, err := ws.ReadMessage()
-			if err != nil {
-				log.Print("error:", err)
 				return
 			}
-			log.Print("type = ", t)
-			log.Print("data = ", string(d))
+			doMethod(n, &request)
 		}
 	}()
 	return err

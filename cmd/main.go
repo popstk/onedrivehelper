@@ -127,8 +127,6 @@ func main() {
 		redisClient: redis.NewClient(opt),
 	}
 
-	//rpcc.SetNotifier(notify)
-
 	chexit := make(chan struct{})
 	err = setNotifier(conf.RPC, notify, chexit)
 	if err != nil {
@@ -138,5 +136,4 @@ func main() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGKILL, syscall.SIGTERM)
 	<-ch
-	//close(chexit)
 }
