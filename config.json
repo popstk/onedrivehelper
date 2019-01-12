@@ -3,11 +3,15 @@
     "queue": "upload",
     "rootpath": "/upload",
     "session": "~/.onedrive.json",
+    "rpc": "http://127.0.0.1:7800/jsonrpc",
+    "secret": "7007670af6982fa59a0c",
     "ignoreext": [
         "html",
         "htm",
         "url",
         "torrent",
-        "chm"
+        "chm",
+        "txt",
+        "nfo"
     ]
 }

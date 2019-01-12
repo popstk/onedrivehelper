@@ -108,3 +108,5 @@ nohup.out
 *.db
 *.rdb
 *.exe
+
+bin/
