@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -63,20 +64,29 @@ func parseConf(name string) (config, error) {
 }
 
 func formatPath(dir, path string) (string, error) {
+	if dir == "" {
+		return "", errors.New("Empty directory")
+	}
+
 	if !strings.HasPrefix(path, dir) {
 		return "", errors.New("Invalid dir and path")
 	}
 
-	for len(path) > len(dir) {
-		p := filepath.Dir(path)
-		log.Print(p)
-		if p == dir {
-			return path, nil
-		}
-		path = p
+	f, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return "", errors.New(fmt.Sprint("Not exist file: ", path))
+	}
+	if f.IsDir() {
+		return "", errors.New(fmt.Sprint("Not file: ", path))
 	}
 
-	return "", errors.New("Invalid path")
+	path = path[len(dir):]
+	parts := strings.Split(path, string(filepath.Separator))
+	if len(parts) == 0 {
+		return "", errors.New(fmt.Sprint("Invalid path: ", path))
+	}
+
+	return filepath.Join(dir, parts[0]), nil
 }
 
 func (d *notifier) OnComplete(es []rpc.Event) {
